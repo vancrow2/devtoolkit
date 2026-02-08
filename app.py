@@ -261,27 +261,47 @@ class DeveloperToolkitApp(tk.Tk):
     def _render_file_hash(self) -> None:
         body = self._clear_content("Fájl hash (SHA-256)")
         self.status_text.set("Fájl hash panel megnyitva.")
-        body.columnconfigure(1, weight=1)
+
+        form = ttk.Frame(body)
+        form.grid(row=0, column=0, sticky="ew")
+        form.columnconfigure(1, weight=1)
+
+        output = ttk.Frame(body)
+        output.grid(row=1, column=0, sticky="ew", pady=(12, 0))
+        output.columnconfigure(1, weight=1)
+
+        panel_status = ttk.Label(body, text="")
+        panel_status.grid(row=2, column=0, sticky="w", pady=(10, 0))
 
         path_var = tk.StringVar()
         output_var = tk.StringVar(value="")
 
-        ttk.Label(body, text="Fájl:").grid(
-            row=0, column=0, sticky="w", padx=(0, 8), pady=(0, 6)
+        ttk.Label(form, text="Fájl:").grid(
+            row=0, column=0, sticky="w", padx=(0, 8), pady=(0, 8)
         )
-        ttk.Entry(body, textvariable=path_var).grid(
-            row=0, column=1, sticky="ew", pady=(0, 6)
+        ttk.Entry(form, textvariable=path_var).grid(
+            row=0, column=1, sticky="ew", pady=(0, 8)
+        )
+        ttk.Button(form, text="Tallózás", command=lambda: choose_file()).grid(
+            row=0, column=2, padx=(8, 0), pady=(0, 8)
         )
 
-        ttk.Label(body, text="SHA-256").grid(
-            row=1, column=0, columnspan=3, sticky="w", pady=(0, 6)
+        ttk.Label(form, text="SHA-256").grid(
+            row=1, column=0, columnspan=3, sticky="w", pady=(0, 8)
         )
 
-        ttk.Label(body, text="Hash:").grid(
-            row=2, column=0, sticky="w", padx=(0, 8), pady=(0, 6)
+        ttk.Label(output, text="Hash:").grid(
+            row=0, column=0, sticky="w", padx=(0, 8), pady=(0, 8)
         )
-        ttk.Entry(body, textvariable=output_var, state="readonly").grid(
-            row=2, column=1, sticky="ew", pady=(0, 6)
+        ttk.Entry(output, textvariable=output_var, state="readonly").grid(
+            row=0, column=1, sticky="ew", pady=(0, 8)
+        )
+        ttk.Button(output, text="Másolás", command=lambda: copy_hash()).grid(
+            row=0, column=2, padx=(8, 0), pady=(0, 8)
+        )
+
+        ttk.Button(form, text="Hash számítás", command=lambda: hash_file()).grid(
+            row=2, column=0, sticky="w"
         )
 
         def choose_file() -> None:
@@ -293,15 +313,19 @@ class DeveloperToolkitApp(tk.Tk):
             path = Path(path_var.get().strip())
             if not str(path):
                 output_var.set("Adj meg fájlt.")
+                panel_status.config(text="Hiba")
                 return
             if not path.exists() or not path.is_file():
                 output_var.set("A megadott útvonal nem érvényes fájl.")
+                panel_status.config(text="Hiba")
                 return
             try:
                 output_var.set(sha256_for_file(path))
+                panel_status.config(text="OK")
                 self.status_text.set(f"Hash elkészült: {path.name}")
             except OSError as exc:
                 output_var.set(f"Hiba: {exc}")
+                panel_status.config(text="Hiba")
                 self.status_text.set("Hash számítás sikertelen.")
 
         def copy_hash() -> None:
@@ -312,16 +336,6 @@ class DeveloperToolkitApp(tk.Tk):
             self.clipboard_clear()
             self.clipboard_append(value)
             self.status_text.set("Hash vágólapra másolva.")
-
-        ttk.Button(body, text="Tallózás", command=choose_file).grid(
-            row=0, column=2, padx=(8, 0), pady=(0, 6)
-        )
-        ttk.Button(body, text="Másolás", command=copy_hash).grid(
-            row=2, column=2, padx=(8, 0), pady=(0, 6)
-        )
-        ttk.Button(body, text="Hash számítás", command=hash_file).grid(
-            row=3, column=0, sticky="w", pady=(2, 0)
-        )
 
     def _render_base64_converter(self) -> None:
         body = self._clear_content("Base64 konverter")
@@ -396,15 +410,23 @@ class DeveloperToolkitApp(tk.Tk):
         body = self._clear_content("Base64 → JSON")
         self.status_text.set("Base64 → JSON panel megnyitva.")
 
-        body.columnconfigure(0, weight=1)
-        body.rowconfigure(2, weight=1)
-        body.rowconfigure(5, weight=1)
+        form = ttk.Frame(body)
+        form.grid(row=0, column=0, sticky="ew")
+        form.columnconfigure(0, weight=1)
+
+        output = ttk.Frame(body)
+        output.grid(row=1, column=0, sticky="nsew", pady=(12, 0))
+        output.columnconfigure(0, weight=1)
+        output.rowconfigure(1, weight=1)
+
+        panel_status = ttk.Label(body, text="")
+        panel_status.grid(row=2, column=0, sticky="w", pady=(10, 0))
 
         urlsafe_var = tk.BooleanVar(value=True)
         padding_var = tk.BooleanVar(value=True)
 
-        options = ttk.Frame(body)
-        options.grid(row=0, column=0, sticky="w", pady=(0, 6))
+        options = ttk.Frame(form)
+        options.grid(row=0, column=0, sticky="w", pady=(0, 8))
         ttk.Checkbutton(
             options,
             text="URL-safe Base64 (base64url: - _)",
@@ -416,26 +438,26 @@ class DeveloperToolkitApp(tk.Tk):
             variable=padding_var,
         ).pack(side="left", padx=(12, 0))
 
-        ttk.Label(body, text="Base64 input").grid(row=1, column=0, sticky="nw")
+        ttk.Label(form, text="Base64 input").grid(row=1, column=0, sticky="w", pady=(0, 4))
 
-        input_wrap = ttk.Frame(body)
-        input_wrap.grid(row=2, column=0, sticky="nsew", pady=(4, 8))
+        input_wrap = ttk.Frame(form)
+        input_wrap.grid(row=2, column=0, sticky="ew")
         input_wrap.columnconfigure(0, weight=1)
         input_wrap.rowconfigure(0, weight=1)
 
-        input_box = tk.Text(input_wrap, wrap="none", height=10, font=("Consolas", 11))
-        input_box.grid(row=0, column=0, sticky="nsew")
+        input_box = tk.Text(input_wrap, wrap="none", height=8, font=("Consolas", 11))
+        input_box.grid(row=0, column=0, sticky="ew")
         input_scroll = ttk.Scrollbar(input_wrap, orient="vertical", command=input_box.yview)
         input_scroll.grid(row=0, column=1, sticky="ns")
         input_box.configure(yscrollcommand=input_scroll.set)
 
-        controls = ttk.Frame(body)
-        controls.grid(row=3, column=0, sticky="w", pady=(0, 8))
+        controls = ttk.Frame(form)
+        controls.grid(row=3, column=0, sticky="w", pady=(8, 0))
 
-        ttk.Label(body, text="Output").grid(row=4, column=0, sticky="nw")
+        ttk.Label(output, text="Output").grid(row=0, column=0, sticky="w", pady=(0, 4))
 
-        output_wrap = ttk.Frame(body)
-        output_wrap.grid(row=5, column=0, sticky="nsew")
+        output_wrap = ttk.Frame(output)
+        output_wrap.grid(row=1, column=0, sticky="nsew")
         output_wrap.columnconfigure(0, weight=1)
         output_wrap.rowconfigure(0, weight=1)
 
@@ -451,6 +473,7 @@ class DeveloperToolkitApp(tk.Tk):
             output_box.delete("1.0", "end")
             output_box.insert("1.0", f"{status}\n\n{message}")
             output_box.configure(state="disabled")
+            panel_status.config(text=status)
 
         def decode_only() -> None:
             ok, decoded = decode_base64_robust(
