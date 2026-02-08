@@ -82,3 +82,12 @@ def test_error_thread_extract_no_error() -> None:
     assert err_count == 0
     assert thread_count == 0
     assert "Nincs Error" in out
+
+
+def test_error_thread_extract_pipe_delimited_log_format() -> None:
+    raw = """Verbose|2/8/2026 10:43:56 AM|19236|S|S|...\nError|2/8/2026 10:43:56 AM|19236|S|S|HSE-L|SSL_VSRE_004_L-A bejelentkezési azonosító érvénytelen.\nInformation|2/8/2026 10:43:56 AM|19236|5|T|PERF(EROR)|[Login]00:00.719\nWarning|2/8/2026 10:43:56 AM|19236|S|S|Failed login exception:SSL_VSRE_004_L-A bejelentkezési azonosító érvénytelen.\n"""
+    err_count, thread_count, out = build_error_thread_extract(raw)
+    assert err_count == 1
+    assert thread_count == 1
+    assert "ThreadId=19236" in out
+    assert "SSL_VSRE_004_L" in out
