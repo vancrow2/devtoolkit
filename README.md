@@ -9,6 +9,7 @@ Windowsra csomagolható desktop alkalmazás Python + Tkinter alapokon.
 - Állapotsor (status bar) a visszajelzésekhez
 - Jegyzet modul (`.txt` mentés, hibakezeléssel)
 - JSON ellenőrző és formázó
+- Base64 konverter (encode/decode, formátumhiba jelzés)
 - Fájl SHA-256 hash számító (chunk-olt olvasással)
 
 ## Futtatás helyben

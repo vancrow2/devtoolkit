@@ -1,3 +1,5 @@
+import base64
+import binascii
 import hashlib
 import json
 import tkinter as tk
@@ -24,6 +26,23 @@ def sha256_for_file(path: Path) -> str:
         while chunk := file.read(8192):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def encode_base64(raw: str) -> str:
+    """Encode UTF-8 text to Base64."""
+    return base64.b64encode(raw.encode("utf-8")).decode("ascii")
+
+
+def decode_base64(raw: str) -> tuple[bool, str]:
+    """Decode a Base64 text and validate formatting/errors."""
+    cleaned = "".join(raw.split())
+    if not cleaned:
+        return False, "Adj meg Base64 szöveget."
+    try:
+        decoded = base64.b64decode(cleaned, validate=True)
+        return True, decoded.decode("utf-8")
+    except (binascii.Error, UnicodeDecodeError):
+        return False, "Sérült vagy érvénytelen Base64 formátum."
 
 
 class DeveloperToolkitApp(tk.Tk):
@@ -64,6 +83,7 @@ class DeveloperToolkitApp(tk.Tk):
             "Üdvözlő": self._render_home,
             "Jegyzet": self._render_notes,
             "JSON ellenőrző": self._render_json_validator,
+            "Base64 konverter": self._render_base64_converter,
             "Fájl hash": self._render_file_hash,
             "Névjegy": self._render_about,
         }
@@ -221,6 +241,75 @@ class DeveloperToolkitApp(tk.Tk):
         )
         ttk.Label(body, textvariable=output_var, wraplength=620).grid(
             row=2, column=0, columnspan=3, sticky="w", pady=(12, 0)
+        )
+
+    def _render_base64_converter(self) -> None:
+        body = self._clear_content("Base64 konverter")
+        self.status_text.set("Base64 konverter panel megnyitva.")
+        body.columnconfigure(0, weight=1)
+        body.rowconfigure(1, weight=1)
+        body.rowconfigure(4, weight=1)
+
+        ttk.Label(body, text="Base64").grid(row=0, column=0, sticky="w")
+        top_container = ttk.Frame(body)
+        top_container.grid(row=1, column=0, sticky="nsew")
+        top_container.columnconfigure(0, weight=1)
+        top_container.rowconfigure(0, weight=1)
+        base64_box = tk.Text(top_container, wrap="none", height=8, font=("Consolas", 11))
+        base64_box.grid(row=0, column=0, sticky="nsew")
+        top_scroll = ttk.Scrollbar(top_container, orient="vertical", command=base64_box.yview)
+        top_scroll.grid(row=0, column=1, sticky="ns")
+        base64_box.configure(yscrollcommand=top_scroll.set)
+
+        controls = ttk.Frame(body)
+        controls.grid(row=2, column=0, sticky="ew", pady=(8, 8))
+
+        ttk.Label(body, text="Text").grid(row=3, column=0, sticky="w")
+        bottom_container = ttk.Frame(body)
+        bottom_container.grid(row=4, column=0, sticky="nsew")
+        bottom_container.columnconfigure(0, weight=1)
+        bottom_container.rowconfigure(0, weight=1)
+        text_box = tk.Text(bottom_container, wrap="none", height=8, font=("Consolas", 11))
+        text_box.grid(row=0, column=0, sticky="nsew")
+        bottom_scroll = ttk.Scrollbar(bottom_container, orient="vertical", command=text_box.yview)
+        bottom_scroll.grid(row=0, column=1, sticky="ns")
+        text_box.configure(yscrollcommand=bottom_scroll.set)
+
+        result = ttk.Label(body, text="")
+        result.grid(row=5, column=0, sticky="w", pady=(8, 0))
+
+        sample_text = "InfoScope Kft. 2026"
+        sample_base64 = encode_base64(sample_text)
+        base64_box.insert("1.0", f'Base64 = "{sample_base64}"')
+        text_box.insert("1.0", f'Text = "{sample_text}"')
+
+        def encode_text() -> None:
+            source = text_box.get("1.0", "end").strip()
+            if not source:
+                result.config(text="❌ Adj meg szöveget az alsó mezőben.")
+                self.status_text.set("Base64 encode hibás: nincs szöveg.")
+                return
+            encoded = encode_base64(source)
+            base64_box.delete("1.0", "end")
+            base64_box.insert("1.0", encoded)
+            result.config(text="✅ Kódolás kész.")
+            self.status_text.set("Base64 kódolás sikeres.")
+
+        def decode_text() -> None:
+            source = base64_box.get("1.0", "end")
+            ok, decoded = decode_base64(source)
+            if not ok:
+                result.config(text=f"❌ {decoded}")
+                self.status_text.set("Base64 dekódolás hibás.")
+                return
+            text_box.delete("1.0", "end")
+            text_box.insert("1.0", decoded)
+            result.config(text="✅ Dekódolás kész.")
+            self.status_text.set("Base64 dekódolás sikeres.")
+
+        ttk.Button(controls, text="Encode", command=encode_text).pack(side="left")
+        ttk.Button(controls, text="Decode", command=decode_text).pack(
+            side="left", padx=(8, 0)
         )
 
     def _render_about(self) -> None:
