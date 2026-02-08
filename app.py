@@ -3,6 +3,7 @@ import binascii
 import hashlib
 import json
 import re
+import shutil
 import ssl
 import subprocess
 import tkinter as tk
@@ -142,10 +143,26 @@ def _to_der_bytes(cert_path: Path) -> tuple[bool, bytes | None, str]:
     return True, raw, ""
 
 
+def _extract_certutil_block(text: str, pattern: str) -> str:
+    match = re.search(pattern, text, flags=re.DOTALL | re.IGNORECASE)
+    if not match:
+        return "-"
+    lines = [line.strip() for line in match.group(1).splitlines() if line.strip()]
+    return " ".join(lines) if lines else "-"
+
+
 def read_certificate_info(cert_path: Path) -> tuple[bool, dict[str, str], str]:
-    """Read key certificate fields from a certificate file via openssl."""
+    """Read key certificate fields from a certificate file using certutil."""
     if not cert_path.exists() or not cert_path.is_file():
         return False, {}, "A megadott útvonal nem érvényes fájl."
+
+    certutil_path = shutil.which("certutil")
+    if not certutil_path:
+        return (
+            False,
+            {},
+            "A certutil nem érhető el ezen a gépen/PATH-ban, ezért a tanúsítvány nem olvasható.",
+        )
 
     ok_der, der_bytes, der_error = _to_der_bytes(cert_path)
     if not ok_der or der_bytes is None:
@@ -154,78 +171,85 @@ def read_certificate_info(cert_path: Path) -> tuple[bool, dict[str, str], str]:
     sha1_thumbprint = hashlib.sha1(der_bytes).hexdigest().upper()
     sha256_thumbprint = hashlib.sha256(der_bytes).hexdigest().upper()
 
-    text_output = ""
-    for inform in ("PEM", "DER"):
-        result = subprocess.run(
-            [
-                "openssl",
-                "x509",
-                "-in",
-                str(cert_path),
-                "-inform",
-                inform,
-                "-noout",
-                "-text",
-                "-subject",
-                "-issuer",
-                "-serial",
-                "-startdate",
-                "-enddate",
-            ],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if result.returncode == 0:
-            text_output = result.stdout
-            break
+    result = subprocess.run(
+        [certutil_path, "-dump", str(cert_path)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        err = (result.stderr or "").strip() or "A certutil nem tudta feldolgozni a fájlt."
+        return False, {}, f"certutil hiba: {err}"
 
-    if not text_output:
-        return False, {}, "A tanúsítvány nem olvasható (PEM/DER) vagy openssl hiba történt."
+    dump = result.stdout
 
-    subject_line = next((ln for ln in text_output.splitlines() if ln.startswith("subject=")), "")
-    issuer_line = next((ln for ln in text_output.splitlines() if ln.startswith("issuer=")), "")
-    serial_line = next((ln for ln in text_output.splitlines() if ln.startswith("serial=")), "")
-    not_before_line = next((ln for ln in text_output.splitlines() if ln.startswith("notBefore=")), "")
-    not_after_line = next((ln for ln in text_output.splitlines() if ln.startswith("notAfter=")), "")
+    subject_match = re.search(r"(?:^|\n)Subject:\s*(.+?)(?=\n\S|\Z)", dump, flags=re.DOTALL)
+    issuer_match = re.search(r"(?:^|\n)Issuer:\s*(.+?)(?=\n\S|\Z)", dump, flags=re.DOTALL)
+    serial_match = re.search(r"(?:Serial Number|Sorozatsz[aá]m)\s*:\s*([^\n]+)", dump, flags=re.IGNORECASE)
 
-    signature_match = re.search(r"Signature Algorithm:\s*([^\n]+)", text_output)
-    pubkey_alg_match = re.search(r"Public Key Algorithm:\s*([^\n]+)", text_output)
-    key_size_match = re.search(r"Public-Key:\s*\((\d+) bit\)", text_output)
+    not_before_match = re.search(
+        r"(?:NotBefore|Érvényesség kezdete|Not Before)\s*:\s*([^\n]+)",
+        dump,
+        flags=re.IGNORECASE,
+    )
+    not_after_match = re.search(
+        r"(?:NotAfter|Érvényesség vége|Not After)\s*:\s*([^\n]+)",
+        dump,
+        flags=re.IGNORECASE,
+    )
 
-    not_before = not_before_line.replace("notBefore=", "").strip() or "-"
-    not_after = not_after_line.replace("notAfter=", "").strip() or "-"
+    signature_match = re.search(r"Signature Algorithm\s*:?\s*([^\n]+)", dump)
+    pubkey_match = re.search(r"Public Key Algorithm\s*:?\s*([^\n]+)", dump)
+    key_size_match = re.search(r"Public Key Length\s*:?\s*([^\n]+)", dump)
+
+    subject_text = subject_match.group(1).strip() if subject_match else ""
+    issuer_text = issuer_match.group(1).strip() if issuer_match else ""
+
+    not_before = not_before_match.group(1).strip() if not_before_match else "-"
+    not_after = not_after_match.group(1).strip() if not_after_match else "-"
 
     days_left = "-"
     if not_after != "-":
-        try:
-            exp = datetime.strptime(not_after, "%b %d %H:%M:%S %Y %Z").replace(
-                tzinfo=timezone.utc
-            )
-            days_left = str((exp - datetime.now(timezone.utc)).days)
-        except ValueError:
-            days_left = "-"
+        date_match = re.search(r"([A-Za-z]{3}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}\s+\d{4})", not_after)
+        if date_match:
+            try:
+                exp = datetime.strptime(date_match.group(1), "%b %d %H:%M:%S %Y").replace(tzinfo=timezone.utc)
+                days_left = str((exp - datetime.now(timezone.utc)).days)
+            except ValueError:
+                days_left = "-"
 
-    san_raw = _extract_extension(text_output, "Subject Alternative Name")
+    key_usage = _extract_certutil_block(
+        dump,
+        r"(?:2\.5\.29\.15|Key Usage).*?:\s*\n(.+?)(?=\n\s*(?:2\.5\.29\.|[0-9]+\.[0-9]+\.|CERT_|Signature Algorithm|$))",
+    )
+    eku = _extract_certutil_block(
+        dump,
+        r"(?:2\.5\.29\.37|Enhanced Key Usage).*?:\s*\n(.+?)(?=\n\s*(?:2\.5\.29\.|[0-9]+\.[0-9]+\.|CERT_|Signature Algorithm|$))",
+    )
+    san = _extract_certutil_block(
+        dump,
+        r"(?:2\.5\.29\.17|Subject Alternative Name).*?:\s*\n(.+?)(?=\n\s*(?:2\.5\.29\.|[0-9]+\.[0-9]+\.|CERT_|Signature Algorithm|$))",
+    )
+
     san_items = []
-    if san_raw != "-":
-        for part in [p.strip() for p in san_raw.split(",") if p.strip()]:
-            if part.startswith("DNS:") or part.startswith("IP Address:"):
+    if san != "-":
+        for part in [p.strip() for p in san.split(",") if p.strip()]:
+            if "DNS" in part or "IP" in part:
                 san_items.append(part)
-    san_value = ", ".join(san_items) if san_items else (san_raw if san_raw != "-" else "-")
+    san_value = ", ".join(san_items) if san_items else san
 
     info = {
-        "Subject CN": _extract_cn(subject_line),
-        "Issuer CN": _extract_cn(issuer_line),
-        "Serial number": serial_line.replace("serial=", "").strip() or "-",
+        "Subject CN": _extract_cn(subject_text),
+        "Issuer CN": _extract_cn(issuer_text),
+        "Serial number": serial_match.group(1).strip() if serial_match else "-",
         "Not Before": not_before,
         "Not After": not_after,
         "Days left": days_left,
         "Signature algorithm": signature_match.group(1).strip() if signature_match else "-",
-        "Public key algorithm": pubkey_alg_match.group(1).strip() if pubkey_alg_match else "-",
-        "Key size": f"{key_size_match.group(1)} bit" if key_size_match else "-",
-        "Key Usage": _extract_extension(text_output, "Key Usage"),
-        "Enhanced Key Usage (EKU)": _extract_extension(text_output, "Extended Key Usage"),
+        "Public key algorithm": pubkey_match.group(1).strip() if pubkey_match else "-",
+        "Key size": key_size_match.group(1).strip() if key_size_match else "-",
+        "Key Usage": key_usage,
+        "Enhanced Key Usage (EKU)": eku,
         "SAN": san_value,
         "Chain status": "OK",
         "SHA-1 thumbprint": sha1_thumbprint,
