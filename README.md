@@ -12,6 +12,7 @@ Windowsra csomagolható desktop alkalmazás Python + Tkinter alapokon.
 - Base64 konverter (encode/decode, formátumhiba jelzés)
 - Base64 → JSON (dekódolás + JSON pretty/validálás)
 - Fájl SHA-256 hash számító (chunk-olt olvasással)
+- Tanúsítvány infó (.cer/.crt/.pem gyors áttekintés + thumbprint másolás)
 
 ## Futtatás helyben
 

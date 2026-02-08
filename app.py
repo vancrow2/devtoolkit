@@ -2,7 +2,11 @@ import base64
 import binascii
 import hashlib
 import json
+import re
+import ssl
+import subprocess
 import tkinter as tk
+from datetime import datetime, timezone
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
@@ -100,6 +104,136 @@ def decode_and_pretty_json_from_base64(
     return True, "OK", pretty
 
 
+def _extract_cn(name_line: str) -> str:
+    match = re.search(r"CN\s*=\s*([^,\/]+)", name_line)
+    if match:
+        return match.group(1).strip()
+    slash_match = re.search(r"/CN=([^/]+)", name_line)
+    if slash_match:
+        return slash_match.group(1).strip()
+    return "-"
+
+
+def _extract_extension(text: str, extension_name: str) -> str:
+    pattern = rf"X509v3 {re.escape(extension_name)}:\s*\n\s*(.+?)(?=\n\s*X509v3 |\n\s*Signature Algorithm:|\Z)"
+    match = re.search(pattern, text, flags=re.DOTALL)
+    if not match:
+        return "-"
+    lines = [line.strip() for line in match.group(1).splitlines() if line.strip()]
+    return " ".join(lines) if lines else "-"
+
+
+def _to_der_bytes(cert_path: Path) -> tuple[bool, bytes | None, str]:
+    raw = cert_path.read_bytes()
+    if b"-----BEGIN CERTIFICATE-----" in raw:
+        pem_match = re.search(
+            b"-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----",
+            raw,
+            flags=re.DOTALL,
+        )
+        if not pem_match:
+            return False, None, "Nem található tanúsítvány blokk a PEM fájlban."
+        pem_text = pem_match.group(0).decode("ascii", errors="ignore")
+        try:
+            der = ssl.PEM_cert_to_DER_cert(pem_text)
+        except ValueError:
+            return False, None, "Érvénytelen PEM tanúsítvány formátum."
+        return True, der, ""
+    return True, raw, ""
+
+
+def read_certificate_info(cert_path: Path) -> tuple[bool, dict[str, str], str]:
+    """Read key certificate fields from a certificate file via openssl."""
+    if not cert_path.exists() or not cert_path.is_file():
+        return False, {}, "A megadott útvonal nem érvényes fájl."
+
+    ok_der, der_bytes, der_error = _to_der_bytes(cert_path)
+    if not ok_der or der_bytes is None:
+        return False, {}, der_error
+
+    sha1_thumbprint = hashlib.sha1(der_bytes).hexdigest().upper()
+    sha256_thumbprint = hashlib.sha256(der_bytes).hexdigest().upper()
+
+    text_output = ""
+    for inform in ("PEM", "DER"):
+        result = subprocess.run(
+            [
+                "openssl",
+                "x509",
+                "-in",
+                str(cert_path),
+                "-inform",
+                inform,
+                "-noout",
+                "-text",
+                "-subject",
+                "-issuer",
+                "-serial",
+                "-startdate",
+                "-enddate",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode == 0:
+            text_output = result.stdout
+            break
+
+    if not text_output:
+        return False, {}, "A tanúsítvány nem olvasható (PEM/DER) vagy openssl hiba történt."
+
+    subject_line = next((ln for ln in text_output.splitlines() if ln.startswith("subject=")), "")
+    issuer_line = next((ln for ln in text_output.splitlines() if ln.startswith("issuer=")), "")
+    serial_line = next((ln for ln in text_output.splitlines() if ln.startswith("serial=")), "")
+    not_before_line = next((ln for ln in text_output.splitlines() if ln.startswith("notBefore=")), "")
+    not_after_line = next((ln for ln in text_output.splitlines() if ln.startswith("notAfter=")), "")
+
+    signature_match = re.search(r"Signature Algorithm:\s*([^\n]+)", text_output)
+    pubkey_alg_match = re.search(r"Public Key Algorithm:\s*([^\n]+)", text_output)
+    key_size_match = re.search(r"Public-Key:\s*\((\d+) bit\)", text_output)
+
+    not_before = not_before_line.replace("notBefore=", "").strip() or "-"
+    not_after = not_after_line.replace("notAfter=", "").strip() or "-"
+
+    days_left = "-"
+    if not_after != "-":
+        try:
+            exp = datetime.strptime(not_after, "%b %d %H:%M:%S %Y %Z").replace(
+                tzinfo=timezone.utc
+            )
+            days_left = str((exp - datetime.now(timezone.utc)).days)
+        except ValueError:
+            days_left = "-"
+
+    san_raw = _extract_extension(text_output, "Subject Alternative Name")
+    san_items = []
+    if san_raw != "-":
+        for part in [p.strip() for p in san_raw.split(",") if p.strip()]:
+            if part.startswith("DNS:") or part.startswith("IP Address:"):
+                san_items.append(part)
+    san_value = ", ".join(san_items) if san_items else (san_raw if san_raw != "-" else "-")
+
+    info = {
+        "Subject CN": _extract_cn(subject_line),
+        "Issuer CN": _extract_cn(issuer_line),
+        "Serial number": serial_line.replace("serial=", "").strip() or "-",
+        "Not Before": not_before,
+        "Not After": not_after,
+        "Days left": days_left,
+        "Signature algorithm": signature_match.group(1).strip() if signature_match else "-",
+        "Public key algorithm": pubkey_alg_match.group(1).strip() if pubkey_alg_match else "-",
+        "Key size": f"{key_size_match.group(1)} bit" if key_size_match else "-",
+        "Key Usage": _extract_extension(text_output, "Key Usage"),
+        "Enhanced Key Usage (EKU)": _extract_extension(text_output, "Extended Key Usage"),
+        "SAN": san_value,
+        "Chain status": "OK",
+        "SHA-1 thumbprint": sha1_thumbprint,
+        "SHA-256 thumbprint": sha256_thumbprint,
+    }
+    return True, info, ""
+
+
 class DeveloperToolkitApp(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
@@ -141,6 +275,7 @@ class DeveloperToolkitApp(tk.Tk):
             "Base64 konverter": self._render_base64_converter,
             "Base64 → JSON": self._render_base64_json,
             "Fájl hash": self._render_file_hash,
+            "Tanúsítvány infó": self._render_certificate_info,
             "Névjegy": self._render_about,
         }
         for tool_name in self.tools:
@@ -535,6 +670,127 @@ class DeveloperToolkitApp(tk.Tk):
             side="left", padx=(8, 0)
         )
         ttk.Button(controls, text="Clear", command=clear_all).pack(side="left", padx=(8, 0))
+
+    def _render_certificate_info(self) -> None:
+        body = self._clear_content("Tanúsítvány infó")
+        self.status_text.set("Tanúsítvány infó panel megnyitva.")
+
+        form = ttk.Frame(body)
+        form.grid(row=0, column=0, sticky="ew")
+        form.columnconfigure(1, weight=1)
+
+        output = ttk.Frame(body)
+        output.grid(row=1, column=0, sticky="nsew", pady=(12, 0))
+        output.columnconfigure(0, weight=1)
+        output.rowconfigure(0, weight=1)
+
+        cert_path_var = tk.StringVar()
+        sha1_var = tk.StringVar(value="-")
+        sha256_var = tk.StringVar(value="-")
+
+        ttk.Label(form, text="Fájl:").grid(row=0, column=0, sticky="w", padx=(0, 8))
+        ttk.Entry(form, textvariable=cert_path_var).grid(row=0, column=1, sticky="ew")
+
+        result_box = tk.Text(output, wrap="word", height=16, font=("Consolas", 10))
+        result_box.grid(row=0, column=0, sticky="nsew")
+        result_scroll = ttk.Scrollbar(output, orient="vertical", command=result_box.yview)
+        result_scroll.grid(row=0, column=1, sticky="ns")
+        result_box.configure(yscrollcommand=result_scroll.set, state="disabled")
+
+        thumbprints = ttk.Frame(body)
+        thumbprints.grid(row=2, column=0, sticky="ew", pady=(10, 0))
+        thumbprints.columnconfigure(1, weight=1)
+
+        ttk.Label(thumbprints, text="SHA-1:").grid(row=0, column=0, sticky="w", padx=(0, 8))
+        ttk.Entry(thumbprints, textvariable=sha1_var, state="readonly").grid(
+            row=0, column=1, sticky="ew"
+        )
+
+        ttk.Label(thumbprints, text="SHA-256:").grid(
+            row=1, column=0, sticky="w", padx=(0, 8), pady=(6, 0)
+        )
+        ttk.Entry(thumbprints, textvariable=sha256_var, state="readonly").grid(
+            row=1, column=1, sticky="ew", pady=(6, 0)
+        )
+
+        def set_result(text: str) -> None:
+            result_box.configure(state="normal")
+            result_box.delete("1.0", "end")
+            result_box.insert("1.0", text)
+            result_box.configure(state="disabled")
+
+        def format_info(info: dict[str, str]) -> str:
+            fields = [
+                "Subject CN",
+                "Issuer CN",
+                "Serial number",
+                "Not Before",
+                "Not After",
+                "Days left",
+                "Signature algorithm",
+                "Public key algorithm",
+                "Key size",
+                "Key Usage",
+                "Enhanced Key Usage (EKU)",
+                "SAN",
+                "Chain status",
+            ]
+            lines = [f"{field}: {info.get(field, '-')}" for field in fields]
+            return "\n".join(lines)
+
+        def browse_file() -> None:
+            selected = filedialog.askopenfilename(
+                title="Tanúsítvány kiválasztása",
+                filetypes=[
+                    ("Certificate files", "*.cer *.crt *.pem"),
+                    ("All files", "*.*"),
+                ],
+            )
+            if selected:
+                cert_path_var.set(selected)
+
+        def copy_thumbprint(var: tk.StringVar, label: str) -> None:
+            value = var.get().strip()
+            if not value or value == "-":
+                self.status_text.set(f"Nincs másolható {label}.")
+                return
+            self.clipboard_clear()
+            self.clipboard_append(value)
+            self.status_text.set(f"{label} vágólapra másolva.")
+
+        def load_certificate() -> None:
+            target = Path(cert_path_var.get().strip())
+            ok, info, error = read_certificate_info(target)
+            if not ok:
+                sha1_var.set("-")
+                sha256_var.set("-")
+                set_result(f"Hiba: {error}")
+                self.status_text.set("Tanúsítvány feldolgozás sikertelen.")
+                return
+
+            sha1_var.set(info.get("SHA-1 thumbprint", "-"))
+            sha256_var.set(info.get("SHA-256 thumbprint", "-"))
+            set_result(format_info(info))
+            self.status_text.set("Tanúsítvány adatainak beolvasása kész.")
+
+        controls = ttk.Frame(form)
+        controls.grid(row=0, column=2, padx=(8, 0), sticky="ne")
+        ttk.Button(controls, text="Tallózás", command=browse_file).pack(fill="x")
+        ttk.Button(controls, text="Betöltés", command=load_certificate).pack(
+            fill="x", pady=(6, 0)
+        )
+
+        ttk.Button(
+            thumbprints,
+            text="Copy SHA-1",
+            command=lambda: copy_thumbprint(sha1_var, "SHA-1"),
+        ).grid(row=0, column=2, padx=(8, 0), sticky="ew")
+        ttk.Button(
+            thumbprints,
+            text="Copy SHA-256",
+            command=lambda: copy_thumbprint(sha256_var, "SHA-256"),
+        ).grid(row=1, column=2, padx=(8, 0), pady=(6, 0), sticky="ew")
+
 
     def _render_about(self) -> None:
         body = self._clear_content("Névjegy")
