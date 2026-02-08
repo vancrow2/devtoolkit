@@ -258,6 +258,100 @@ def read_certificate_info(cert_path: Path) -> tuple[bool, dict[str, str], str]:
     return True, info, ""
 
 
+def _extract_first(patterns: list[str], text: str) -> str:
+    for pattern in patterns:
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if match:
+            return match.group(1).strip().strip('"')
+    return ""
+
+
+def _extract_log_parts(line: str) -> tuple[str, str, str, str]:
+    level = _extract_first(
+        [
+            r'"level"\s*:\s*"([^"]+)"',
+            r'\blevel\s*[=:]\s*"?([A-Za-z]+)"?',
+            r'\[\s*(Error|Warn|Info|Debug|Trace)\s*\]',
+        ],
+        line,
+    )
+    thread_id = _extract_first(
+        [
+            r'"threadid"\s*:\s*"?([A-Za-z0-9_-]+)"?',
+            r'\bthreadid\s*[=:]\s*"?([A-Za-z0-9_-]+)"?',
+            r'\bthread\s*[=:]\s*"?([A-Za-z0-9_-]+)"?',
+        ],
+        line,
+    )
+    dt = _extract_first(
+        [
+            r'(\d{4}-\d{2}-\d{2}[T\s]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?)',
+            r'(\d{4}/\d{2}/\d{2}[T\s]\d{2}:\d{2}:\d{2})',
+        ],
+        line,
+    )
+    message = _extract_first(
+        [
+            r'"message"\s*:\s*"([^"]+)"',
+            r'\bmessage\s*[=:]\s*"?(.+)$',
+        ],
+        line,
+    )
+    if not message:
+        message = line.strip()
+    return level, thread_id, dt, message
+
+
+def build_error_thread_extract(raw: str) -> tuple[int, int, str]:
+    lines = raw.splitlines()
+    annotated: list[tuple[str, str]] = []
+    error_events: list[dict[str, str]] = []
+
+    current_thread = ""
+    for line in lines:
+        level, thread_id, dt, msg = _extract_log_parts(line)
+        if thread_id:
+            current_thread = thread_id
+        line_thread = thread_id or current_thread
+        annotated.append((line, line_thread))
+
+        if level.lower() == "error":
+            short_msg = " ".join(msg.split())
+            if len(short_msg) > 80:
+                short_msg = short_msg[:77] + "..."
+            error_events.append(
+                {
+                    "thread_id": line_thread or "-",
+                    "datetime": dt or "-",
+                    "short_message": short_msg or "-",
+                }
+            )
+
+    unique_threads = {e["thread_id"] for e in error_events if e["thread_id"] != "-"}
+    if not error_events:
+        return 0, 0, "Nincs Error szintű log sor."
+
+    blocks: list[str] = []
+    separator = "----------------------------------------"
+    for i, event in enumerate(error_events, start=1):
+        header = (
+            f"===== ERROR #{i} | {event['datetime']} | ThreadId={event['thread_id']}"
+            f" | {event['short_message']} ====="
+        )
+        if event["thread_id"] == "-":
+            thread_lines = [lines[i - 1]] if i - 1 < len(lines) else []
+        else:
+            thread_lines = [line for line, tid in annotated if tid == event["thread_id"]]
+
+        block = "\n".join([header, *thread_lines])
+        blocks.append(block)
+
+    output = f"\n{separator}\n".join(blocks)
+    return len(error_events), len(unique_threads), output
+
+
+
+
 class DeveloperToolkitApp(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
@@ -300,6 +394,7 @@ class DeveloperToolkitApp(tk.Tk):
             "Base64 → JSON": self._render_base64_json,
             "Fájl hash": self._render_file_hash,
             "Tanúsítvány infó": self._render_certificate_info,
+            "Error thread kivonat": self._render_error_thread_extract,
             "Névjegy": self._render_about,
         }
         for tool_name in self.tools:
@@ -814,6 +909,97 @@ class DeveloperToolkitApp(tk.Tk):
             text="Copy SHA-256",
             command=lambda: copy_thumbprint(sha256_var, "SHA-256"),
         ).grid(row=1, column=2, padx=(8, 0), pady=(6, 0), sticky="ew")
+
+
+    def _render_error_thread_extract(self) -> None:
+        body = self._clear_content("Error thread kivonat")
+        self.status_text.set("Error thread kivonat panel megnyitva.")
+
+        body.columnconfigure(0, weight=1)
+        body.rowconfigure(2, weight=1)
+        body.rowconfigure(5, weight=1)
+
+        summary_var = tk.StringVar(value="Error count: 0 | Unique thread count: 0")
+
+        ttk.Label(body, text="Input log").grid(row=0, column=0, sticky="w")
+        input_wrap = ttk.Frame(body)
+        input_wrap.grid(row=1, column=0, sticky="nsew", pady=(4, 8))
+        input_wrap.columnconfigure(0, weight=1)
+        input_wrap.rowconfigure(0, weight=1)
+
+        input_box = tk.Text(input_wrap, wrap="none", height=10, font=("Consolas", 10))
+        input_box.grid(row=0, column=0, sticky="nsew")
+        input_scroll = ttk.Scrollbar(input_wrap, orient="vertical", command=input_box.yview)
+        input_scroll.grid(row=0, column=1, sticky="ns")
+        input_box.configure(yscrollcommand=input_scroll.set)
+
+        controls = ttk.Frame(body)
+        controls.grid(row=3, column=0, sticky="w", pady=(0, 8))
+
+        ttk.Label(body, textvariable=summary_var).grid(row=4, column=0, sticky="w")
+
+        output_wrap = ttk.Frame(body)
+        output_wrap.grid(row=5, column=0, sticky="nsew", pady=(4, 0))
+        output_wrap.columnconfigure(0, weight=1)
+        output_wrap.rowconfigure(0, weight=1)
+
+        output_box = tk.Text(output_wrap, wrap="none", height=14, font=("Consolas", 10))
+        output_box.grid(row=0, column=0, sticky="nsew")
+        output_scroll = ttk.Scrollbar(output_wrap, orient="vertical", command=output_box.yview)
+        output_scroll.grid(row=0, column=1, sticky="ns")
+        output_box.configure(yscrollcommand=output_scroll.set, state="disabled")
+
+        def set_output(text_value: str) -> None:
+            output_box.configure(state="normal")
+            output_box.delete("1.0", "end")
+            output_box.insert("1.0", text_value)
+            output_box.configure(state="disabled")
+
+        def process_logs() -> None:
+            error_count, thread_count, output_text = build_error_thread_extract(
+                input_box.get("1.0", "end")
+            )
+            summary_var.set(
+                f"Error count: {error_count} | Unique thread count: {thread_count}"
+            )
+            set_output(output_text)
+            self.status_text.set("Error thread kivonat elkészült.")
+
+        def copy_output() -> None:
+            text_value = output_box.get("1.0", "end").strip()
+            if not text_value:
+                self.status_text.set("Nincs másolható output.")
+                return
+            self.clipboard_clear()
+            self.clipboard_append(text_value)
+            self.status_text.set("Output vágólapra másolva.")
+
+        def export_output() -> None:
+            text_value = output_box.get("1.0", "end").strip()
+            if not text_value:
+                self.status_text.set("Nincs exportálható output.")
+                return
+            path = filedialog.asksaveasfilename(
+                title="Kivonat exportálása",
+                defaultextension=".txt",
+                filetypes=[("Text files", "*.txt"), ("All files", "*.*")],
+            )
+            if not path:
+                return
+            try:
+                Path(path).write_text(text_value, encoding="utf-8")
+            except OSError as exc:
+                self.status_text.set(f"Export hiba: {exc}")
+                return
+            self.status_text.set(f"Export kész: {path}")
+
+        ttk.Button(controls, text="Feldolgozás", command=process_logs).pack(side="left")
+        ttk.Button(controls, text="Copy output", command=copy_output).pack(
+            side="left", padx=(8, 0)
+        )
+        ttk.Button(controls, text="Export", command=export_output).pack(
+            side="left", padx=(8, 0)
+        )
 
 
     def _render_about(self) -> None:

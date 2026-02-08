@@ -1,8 +1,8 @@
 from pathlib import Path
 
 from app import (
+    build_error_thread_extract,
     decode_and_pretty_json_from_base64,
-    decode_base64,
     decode_base64_robust,
     encode_base64,
     format_json,
@@ -57,3 +57,28 @@ def test_base64_invalid_error() -> None:
     ok, decoded = decode_base64_robust("@@@not-base64@@@")
     assert ok is False
     assert "Érvénytelen" in decoded
+
+
+def test_error_thread_extract_all_errors_and_threads() -> None:
+    raw = """2026-02-08 10:00:00 LEVEL=Info ThreadId=11 Message=Start
+2026-02-08 10:00:01 LEVEL=Error ThreadId=11 Message=Első hiba
+2026-02-08 10:00:02 LEVEL=Info ThreadId=11 Message=Followup
+2026-02-08 10:00:03 LEVEL=Error ThreadId=12 Message=Második hiba
+2026-02-08 10:00:04 LEVEL=Info ThreadId=12 Message=After
+"""
+    err_count, thread_count, out = build_error_thread_extract(raw)
+    assert err_count == 2
+    assert thread_count == 2
+    assert "===== ERROR #1" in out
+    assert "===== ERROR #2" in out
+    assert "ThreadId=11" in out
+    assert "ThreadId=12" in out
+    assert "----------------------------------------" in out
+
+
+def test_error_thread_extract_no_error() -> None:
+    raw = "2026-02-08 10:00:00 LEVEL=Info ThreadId=11 Message=Start"
+    err_count, thread_count, out = build_error_thread_extract(raw)
+    assert err_count == 0
+    assert thread_count == 0
+    assert "Nincs Error" in out
