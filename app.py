@@ -45,6 +45,61 @@ def decode_base64(raw: str) -> tuple[bool, str]:
         return False, "Sérült vagy érvénytelen Base64 formátum."
 
 
+def decode_base64_robust(
+    raw: str,
+    *,
+    urlsafe: bool = True,
+    add_padding: bool = True,
+) -> tuple[bool, str]:
+    """Decode Base64/Base64URL with optional padding repair and friendly errors."""
+    cleaned = "".join(raw.split())
+    if not cleaned:
+        return False, "Adj meg Base64 inputot."
+
+    candidate = cleaned
+    if urlsafe or "-" in candidate or "_" in candidate:
+        candidate = candidate.replace("-", "+").replace("_", "/")
+
+    if add_padding:
+        missing = len(candidate) % 4
+        if missing:
+            candidate += "=" * (4 - missing)
+
+    try:
+        decoded = base64.b64decode(candidate, validate=True)
+    except (binascii.Error, ValueError):
+        return False, "Érvénytelen vagy sérült Base64 input."
+
+    try:
+        return True, decoded.decode("utf-8")
+    except UnicodeDecodeError:
+        return False, "A dekódolt tartalom nem UTF-8 szöveg."
+
+
+def decode_and_pretty_json_from_base64(
+    raw: str,
+    *,
+    urlsafe: bool = True,
+    add_padding: bool = True,
+) -> tuple[bool, str, str]:
+    """Decode Base64 text and attempt JSON pretty-printing."""
+    ok, decoded_text = decode_base64_robust(
+        raw,
+        urlsafe=urlsafe,
+        add_padding=add_padding,
+    )
+    if not ok:
+        return False, "Hiba", decoded_text
+
+    try:
+        parsed = json.loads(decoded_text)
+    except json.JSONDecodeError:
+        return True, "Nem JSON", decoded_text
+
+    pretty = json.dumps(parsed, ensure_ascii=False, indent=2)
+    return True, "JSON ok", pretty
+
+
 class DeveloperToolkitApp(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
@@ -84,6 +139,7 @@ class DeveloperToolkitApp(tk.Tk):
             "Jegyzet": self._render_notes,
             "JSON ellenőrző": self._render_json_validator,
             "Base64 konverter": self._render_base64_converter,
+            "Base64 → JSON": self._render_base64_json,
             "Fájl hash": self._render_file_hash,
             "Névjegy": self._render_about,
         }
@@ -247,8 +303,8 @@ class DeveloperToolkitApp(tk.Tk):
         body = self._clear_content("Base64 konverter")
         self.status_text.set("Base64 konverter panel megnyitva.")
         body.columnconfigure(0, weight=1)
-        body.rowconfigure(1, weight=1)
-        body.rowconfigure(4, weight=1)
+        body.rowconfigure(2, weight=1)
+        body.rowconfigure(5, weight=1)
 
         ttk.Label(body, text="Base64").grid(row=0, column=0, sticky="w")
         top_container = ttk.Frame(body)
@@ -311,6 +367,115 @@ class DeveloperToolkitApp(tk.Tk):
         ttk.Button(controls, text="Decode", command=decode_text).pack(
             side="left", padx=(8, 0)
         )
+
+    def _render_base64_json(self) -> None:
+        body = self._clear_content("Base64 → JSON")
+        self.status_text.set("Base64 → JSON panel megnyitva.")
+
+        body.columnconfigure(0, weight=1)
+        body.rowconfigure(2, weight=1)
+        body.rowconfigure(5, weight=1)
+
+        urlsafe_var = tk.BooleanVar(value=False)
+        padding_var = tk.BooleanVar(value=True)
+
+        options = ttk.Frame(body)
+        options.grid(row=0, column=0, sticky="w", pady=(0, 6))
+        ttk.Checkbutton(
+            options,
+            text="URL-safe Base64 (base64url: - _)",
+            variable=urlsafe_var,
+        ).pack(side="left")
+        ttk.Checkbutton(
+            options,
+            text="Add missing padding (=)",
+            variable=padding_var,
+        ).pack(side="left", padx=(12, 0))
+
+        ttk.Label(body, text="Base64 input").grid(row=1, column=0, sticky="nw")
+
+        input_wrap = ttk.Frame(body)
+        input_wrap.grid(row=2, column=0, sticky="nsew", pady=(4, 8))
+        input_wrap.columnconfigure(0, weight=1)
+        input_wrap.rowconfigure(0, weight=1)
+
+        input_box = tk.Text(input_wrap, wrap="none", height=10, font=("Consolas", 11))
+        input_box.grid(row=0, column=0, sticky="nsew")
+        input_scroll = ttk.Scrollbar(input_wrap, orient="vertical", command=input_box.yview)
+        input_scroll.grid(row=0, column=1, sticky="ns")
+        input_box.configure(yscrollcommand=input_scroll.set)
+
+        controls = ttk.Frame(body)
+        controls.grid(row=3, column=0, sticky="w", pady=(0, 8))
+
+        ttk.Label(body, text="Output").grid(row=4, column=0, sticky="nw")
+
+        output_wrap = ttk.Frame(body)
+        output_wrap.grid(row=5, column=0, sticky="nsew")
+        output_wrap.columnconfigure(0, weight=1)
+        output_wrap.rowconfigure(0, weight=1)
+
+        output_box = tk.Text(output_wrap, wrap="none", height=10, font=("Consolas", 11))
+        output_box.grid(row=0, column=0, sticky="nsew")
+        output_scroll = ttk.Scrollbar(output_wrap, orient="vertical", command=output_box.yview)
+        output_scroll.grid(row=0, column=1, sticky="ns")
+        output_box.configure(yscrollcommand=output_scroll.set)
+        output_box.configure(state="disabled")
+
+        def set_output(message: str) -> None:
+            output_box.configure(state="normal")
+            output_box.delete("1.0", "end")
+            output_box.insert("1.0", message)
+            output_box.configure(state="disabled")
+
+        def decode_only() -> None:
+            ok, decoded = decode_base64_robust(
+                input_box.get("1.0", "end"),
+                urlsafe=urlsafe_var.get(),
+                add_padding=padding_var.get(),
+            )
+            if ok:
+                set_output(decoded)
+                self.status_text.set("Base64 dekódolás sikeres.")
+            else:
+                set_output(f"Hiba: {decoded}")
+                self.status_text.set("Base64 dekódolás hibás.")
+
+        def decode_and_pretty() -> None:
+            ok, status, payload = decode_and_pretty_json_from_base64(
+                input_box.get("1.0", "end"),
+                urlsafe=urlsafe_var.get(),
+                add_padding=padding_var.get(),
+            )
+            prefix = f"{status}\n\n"
+            set_output(prefix + payload)
+            if ok:
+                self.status_text.set(f"Base64 → JSON: {status}")
+            else:
+                self.status_text.set("Base64 → JSON feldolgozás hibás.")
+
+        def copy_output() -> None:
+            content = output_box.get("1.0", "end").strip()
+            if not content:
+                self.status_text.set("Nincs másolható output.")
+                return
+            self.clipboard_clear()
+            self.clipboard_append(content)
+            self.status_text.set("Output vágólapra másolva.")
+
+        def clear_all() -> None:
+            input_box.delete("1.0", "end")
+            set_output("")
+            self.status_text.set("Base64 → JSON panel ürítve.")
+
+        ttk.Button(controls, text="Decode", command=decode_only).pack(side="left")
+        ttk.Button(controls, text="Decode + JSON Pretty", command=decode_and_pretty).pack(
+            side="left", padx=(8, 0)
+        )
+        ttk.Button(controls, text="Copy output", command=copy_output).pack(
+            side="left", padx=(8, 0)
+        )
+        ttk.Button(controls, text="Clear", command=clear_all).pack(side="left", padx=(8, 0))
 
     def _render_about(self) -> None:
         body = self._clear_content("Névjegy")

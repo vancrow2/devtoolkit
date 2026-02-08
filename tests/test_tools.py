@@ -1,6 +1,13 @@
 from pathlib import Path
 
-from app import decode_base64, encode_base64, format_json, sha256_for_file
+from app import (
+    decode_and_pretty_json_from_base64,
+    decode_base64,
+    decode_base64_robust,
+    encode_base64,
+    format_json,
+    sha256_for_file,
+)
 
 
 def test_format_json_success() -> None:
@@ -25,16 +32,28 @@ def test_sha256_for_file(tmp_path: Path) -> None:
     )
 
 
-def test_encode_decode_base64_roundtrip() -> None:
-    source = "InfoScope Kft. 2026"
-    encoded = encode_base64(source)
-    assert encoded == "SW5mb1Njb3BlIEtmdC4gMjAyNg=="
-    ok, decoded = decode_base64(encoded)
+def test_base64_normal_decode() -> None:
+    ok, decoded = decode_base64_robust("dGVzenQ=")
     assert ok is True
-    assert decoded == source
+    assert decoded == "teszt"
 
 
-def test_decode_base64_invalid() -> None:
-    ok, message = decode_base64("not-valid-base64$$")
+def test_base64url_decode() -> None:
+    raw = "eyJhIjoxfQ"
+    ok, decoded = decode_base64_robust(raw)
+    assert ok is True
+    assert decoded == '{"a":1}'
+
+
+def test_base64_json_pretty() -> None:
+    encoded = encode_base64('{"b":2,"a":1}')
+    ok, status, payload = decode_and_pretty_json_from_base64(encoded)
+    assert ok is True
+    assert status == "JSON ok"
+    assert payload == '{\n  "b": 2,\n  "a": 1\n}'
+
+
+def test_base64_invalid_error() -> None:
+    ok, decoded = decode_base64_robust("@@@not-base64@@@")
     assert ok is False
-    assert "Sérült" in message
+    assert "Érvénytelen" in decoded
