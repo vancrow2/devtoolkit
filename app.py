@@ -272,6 +272,7 @@ def _extract_log_parts(line: str) -> tuple[str, str, str, str]:
             r'"level"\s*:\s*"([^"]+)"',
             r'\blevel\s*[=:]\s*"?([A-Za-z]+)"?',
             r'\[\s*(Error|Warn|Info|Debug|Trace)\s*\]',
+            r'^\s*(Error|Warn(?:ing)?|Info|Debug|Trace)\b',
         ],
         line,
     )
@@ -280,6 +281,7 @@ def _extract_log_parts(line: str) -> tuple[str, str, str, str]:
             r'"threadid"\s*:\s*"?([A-Za-z0-9_-]+)"?',
             r'\bthreadid\s*[=:]\s*"?([A-Za-z0-9_-]+)"?',
             r'\bthread\s*[=:]\s*"?([A-Za-z0-9_-]+)"?',
+            r'^(?:[^|]*\|){2}\s*([^|\s]+)',
         ],
         line,
     )
@@ -287,6 +289,7 @@ def _extract_log_parts(line: str) -> tuple[str, str, str, str]:
         [
             r'(\d{4}-\d{2}-\d{2}[T\s]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?)',
             r'(\d{4}/\d{2}/\d{2}[T\s]\d{2}:\d{2}:\d{2})',
+            r'(\d{1,2}/\d{1,2}/\d{4}\s+\d{1,2}:\d{2}:\d{2}\s+(?:AM|PM))',
         ],
         line,
     )
