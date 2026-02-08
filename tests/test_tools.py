@@ -49,7 +49,7 @@ def test_base64_json_pretty() -> None:
     encoded = encode_base64('{"b":2,"a":1}')
     ok, status, payload = decode_and_pretty_json_from_base64(encoded)
     assert ok is True
-    assert status == "JSON ok"
+    assert status == "OK"
     assert payload == '{\n  "b": 2,\n  "a": 1\n}'
 
 

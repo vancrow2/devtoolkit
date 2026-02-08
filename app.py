@@ -97,7 +97,7 @@ def decode_and_pretty_json_from_base64(
         return True, "Nem JSON", decoded_text
 
     pretty = json.dumps(parsed, ensure_ascii=False, indent=2)
-    return True, "JSON ok", pretty
+    return True, "OK", pretty
 
 
 class DeveloperToolkitApp(tk.Tk):
@@ -376,7 +376,7 @@ class DeveloperToolkitApp(tk.Tk):
         body.rowconfigure(2, weight=1)
         body.rowconfigure(5, weight=1)
 
-        urlsafe_var = tk.BooleanVar(value=False)
+        urlsafe_var = tk.BooleanVar(value=True)
         padding_var = tk.BooleanVar(value=True)
 
         options = ttk.Frame(body)
@@ -422,10 +422,10 @@ class DeveloperToolkitApp(tk.Tk):
         output_box.configure(yscrollcommand=output_scroll.set)
         output_box.configure(state="disabled")
 
-        def set_output(message: str) -> None:
+        def set_output(status: str, message: str) -> None:
             output_box.configure(state="normal")
             output_box.delete("1.0", "end")
-            output_box.insert("1.0", message)
+            output_box.insert("1.0", f"{status}\n\n{message}")
             output_box.configure(state="disabled")
 
         def decode_only() -> None:
@@ -435,10 +435,10 @@ class DeveloperToolkitApp(tk.Tk):
                 add_padding=padding_var.get(),
             )
             if ok:
-                set_output(decoded)
+                set_output("OK", decoded)
                 self.status_text.set("Base64 dekódolás sikeres.")
             else:
-                set_output(f"Hiba: {decoded}")
+                set_output("Hiba", decoded)
                 self.status_text.set("Base64 dekódolás hibás.")
 
         def decode_and_pretty() -> None:
@@ -447,12 +447,23 @@ class DeveloperToolkitApp(tk.Tk):
                 urlsafe=urlsafe_var.get(),
                 add_padding=padding_var.get(),
             )
-            prefix = f"{status}\n\n"
-            set_output(prefix + payload)
+            set_output(status, payload)
             if ok:
                 self.status_text.set(f"Base64 → JSON: {status}")
             else:
                 self.status_text.set("Base64 → JSON feldolgozás hibás.")
+
+        def auto_process() -> None:
+            ok, status, payload = decode_and_pretty_json_from_base64(
+                input_box.get("1.0", "end"),
+                urlsafe=urlsafe_var.get(),
+                add_padding=padding_var.get(),
+            )
+            set_output(status, payload)
+            if ok:
+                self.status_text.set(f"Auto feldolgozás: {status}")
+            else:
+                self.status_text.set("Auto feldolgozás hibás.")
 
         def copy_output() -> None:
             content = output_box.get("1.0", "end").strip()
@@ -465,10 +476,11 @@ class DeveloperToolkitApp(tk.Tk):
 
         def clear_all() -> None:
             input_box.delete("1.0", "end")
-            set_output("")
+            set_output("OK", "")
             self.status_text.set("Base64 → JSON panel ürítve.")
 
         ttk.Button(controls, text="Decode", command=decode_only).pack(side="left")
+        ttk.Button(controls, text="Auto", command=auto_process).pack(side="left", padx=(8, 0))
         ttk.Button(controls, text="Decode + JSON Pretty", command=decode_and_pretty).pack(
             side="left", padx=(8, 0)
         )
