@@ -264,10 +264,25 @@ class DeveloperToolkitApp(tk.Tk):
         body.columnconfigure(1, weight=1)
 
         path_var = tk.StringVar()
-        output_var = tk.StringVar(value="Válassz fájlt...")
+        output_var = tk.StringVar(value="")
 
-        ttk.Label(body, text="Fájl:").grid(row=0, column=0, sticky="w", padx=(0, 8))
-        ttk.Entry(body, textvariable=path_var).grid(row=0, column=1, sticky="ew")
+        ttk.Label(body, text="Fájl:").grid(
+            row=0, column=0, sticky="w", padx=(0, 8), pady=(0, 6)
+        )
+        ttk.Entry(body, textvariable=path_var).grid(
+            row=0, column=1, sticky="ew", pady=(0, 6)
+        )
+
+        ttk.Label(body, text="SHA-256").grid(
+            row=1, column=0, columnspan=3, sticky="w", pady=(0, 6)
+        )
+
+        ttk.Label(body, text="Hash:").grid(
+            row=2, column=0, sticky="w", padx=(0, 8), pady=(0, 6)
+        )
+        ttk.Entry(body, textvariable=output_var, state="readonly").grid(
+            row=2, column=1, sticky="ew", pady=(0, 6)
+        )
 
         def choose_file() -> None:
             selected = filedialog.askopenfilename(title="Fájl kiválasztása")
@@ -289,14 +304,23 @@ class DeveloperToolkitApp(tk.Tk):
                 output_var.set(f"Hiba: {exc}")
                 self.status_text.set("Hash számítás sikertelen.")
 
+        def copy_hash() -> None:
+            value = output_var.get().strip()
+            if not value:
+                self.status_text.set("Nincs másolható hash.")
+                return
+            self.clipboard_clear()
+            self.clipboard_append(value)
+            self.status_text.set("Hash vágólapra másolva.")
+
         ttk.Button(body, text="Tallózás", command=choose_file).grid(
-            row=0, column=2, padx=(8, 0)
+            row=0, column=2, padx=(8, 0), pady=(0, 6)
+        )
+        ttk.Button(body, text="Másolás", command=copy_hash).grid(
+            row=2, column=2, padx=(8, 0), pady=(0, 6)
         )
         ttk.Button(body, text="Hash számítás", command=hash_file).grid(
-            row=1, column=2, padx=(8, 0), pady=(8, 0)
-        )
-        ttk.Label(body, textvariable=output_var, wraplength=620).grid(
-            row=2, column=0, columnspan=3, sticky="w", pady=(12, 0)
+            row=3, column=0, sticky="w", pady=(2, 0)
         )
 
     def _render_base64_converter(self) -> None:
