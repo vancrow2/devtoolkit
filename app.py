@@ -59,7 +59,7 @@ def decode_base64_robust(
     """Decode Base64/Base64URL with optional padding repair and friendly errors."""
     cleaned = "".join(raw.split())
     if not cleaned:
-        return False, "Adj meg Base64 inputot."
+        return False, "Adj meg Base64 szöveget."
 
     candidate = cleaned
     if urlsafe or "-" in candidate or "_" in candidate:
